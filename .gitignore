@@ -1,0 +1,5 @@
+api/node_modules/
+api/server.err.log
+api/server.out.log
+cpp/log_engine
+cpp/log_engine.exe

@@ -1,0 +1,10 @@
+[
+  { "id": 1, "ts": 1713900001, "service": "auth", "level": "INFO", "status": 200, "latency": 42, "message": "login succeeded" },
+  { "id": 2, "ts": 1713900002, "service": "payments", "level": "ERROR", "status": 500, "latency": 312, "message": "charge failed" },
+  { "id": 3, "ts": 1713900003, "service": "search", "level": "WARN", "status": 429, "latency": 144, "message": "rate limited" },
+  { "id": 4, "ts": 1713900004, "service": "auth", "level": "ERROR", "status": 401, "latency": 180, "message": "invalid token" },
+  { "id": 5, "ts": 1713900005, "service": "billing", "level": "INFO", "status": 200, "latency": 91, "message": "invoice loaded" },
+  { "id": 6, "ts": 1713900006, "service": "auth", "level": "INFO", "status": 200, "latency": 128, "message": "session refreshed" },
+  { "id": 7, "ts": 1713900007, "service": "payments", "level": "INFO", "status": 201, "latency": 87, "message": "charge created" },
+  { "id": 8, "ts": 1713900008, "service": "search", "level": "ERROR", "status": 503, "latency": 451, "message": "index unavailable" }
+]
