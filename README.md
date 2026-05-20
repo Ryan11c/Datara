@@ -25,6 +25,7 @@ A high-performance C++ log query engine for structured JSON logs. The project fo
   - naive full-scan execution
   - single-threaded indexed execution
   - multithreaded indexed execution
+  - segmented indexed execution with timestamp-based segment pruning
   - multithreaded indexed candidate lookup
   - multithreaded aggregations
   - pagination
@@ -95,6 +96,12 @@ Run a larger benchmark:
 .\cpp\log_engine.exe --benchmark --count 10000000
 ```
 
+Run a segment-pruning benchmark:
+
+```powershell
+.\cpp\log_engine.exe --benchmark --count 10000000 --segment-size 1000000 --query "ts > 1723800000 AND level = ERROR AND latency > 1190"
+```
+
 Default benchmark query:
 
 ```text
@@ -113,6 +120,24 @@ Recent 10M-log benchmark result:
   "indexedThreadedMs": 219,
   "threadedSpeedupPercent": 94.0747,
   "matches": 6679
+}
+```
+
+Recent 10M-log segment-pruning benchmark:
+
+```json
+{
+  "records": 10000000,
+  "query": "ts > 1723800000 AND level = ERROR AND latency > 1190",
+  "segmentSize": 1000000,
+  "segments": 10,
+  "searchedSegments": 1,
+  "naiveMs": 3770,
+  "indexedThreadedMs": 86,
+  "segmentedThreadedMs": 37,
+  "segmentedSpeedupPercent": 99.0186,
+  "segmentDeltaPercent": 56.9767,
+  "matches": 65
 }
 ```
 
@@ -168,11 +193,14 @@ flowchart LR
     IDX --> LVL["level inverted index"]
     IDX --> LAT["latency numeric index"]
     IDX --> TS["timestamp numeric index"]
+    STORE --> SEG["Segment storage"]
+    SEG --> META["min/max timestamp metadata"]
     STORE --> EXEC["Query executor"]
     SVC --> EXEC
     LVL --> EXEC
     LAT --> EXEC
     TS --> EXEC
+    META --> EXEC
     EXEC --> MT["Multithreaded candidate lookup"]
     MT --> AGG["Pagination and aggregations"]
     AGG --> OUT["JSON results"]

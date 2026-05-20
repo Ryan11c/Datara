@@ -3,8 +3,11 @@
 #include "query.h"
 #include "storage.h"
 
+#include <algorithm>
 #include <chrono>
+#include <future>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -30,6 +33,13 @@ bool hasArg(int argc, char** argv, const std::string& name) {
 
     return false;
 }
+
+struct Segment {
+    LogStorage storage;
+    LogIndex index;
+    long long minTs = std::numeric_limits<long long>::max();
+    long long maxTs = std::numeric_limits<long long>::min();
+};
 
 std::string jsonEscape(const std::string& input) {
     std::string output;
@@ -121,7 +131,100 @@ void loadRecords(LogStorage& storage, const std::vector<LogRecord>& records) {
     }
 }
 
-void printBenchmark(int count, const std::string& query) {
+std::vector<Segment> buildSegments(const std::vector<LogRecord>& records, int segmentSize) {
+    std::vector<Segment> segments;
+    if (records.empty()) {
+        return segments;
+    }
+
+    const size_t safeSegmentSize = static_cast<size_t>(std::max(1, segmentSize));
+    for (size_t start = 0; start < records.size(); start += safeSegmentSize) {
+        const size_t end = std::min(records.size(), start + safeSegmentSize);
+        Segment segment;
+        for (size_t i = start; i < end; ++i) {
+            segment.minTs = std::min(segment.minTs, records[i].ts);
+            segment.maxTs = std::max(segment.maxTs, records[i].ts);
+            segment.storage.add(records[i]);
+        }
+        segment.index.build(segment.storage);
+        segments.push_back(std::move(segment));
+    }
+
+    return segments;
+}
+
+std::pair<long long, long long> timestampBounds(const std::vector<Condition>& conditions) {
+    long long lower = std::numeric_limits<long long>::min();
+    long long upper = std::numeric_limits<long long>::max();
+
+    for (const auto& condition : conditions) {
+        if (condition.field != "ts") {
+            continue;
+        }
+
+        const long long value = std::stoll(condition.value);
+        if (condition.op == Operator::GreaterThan) {
+            lower = std::max(lower, value);
+        } else if (condition.op == Operator::LessThan) {
+            upper = std::min(upper, value);
+        }
+    }
+
+    return {lower, upper};
+}
+
+bool segmentOverlaps(const Segment& segment, long long lowerTs, long long upperTs) {
+    return segment.maxTs > lowerTs && segment.minTs < upperTs;
+}
+
+QueryResult executeSegmentedIndexed(const std::vector<Segment>& segments, const std::vector<Condition>& conditions, const QueryOptions& options, int& searchedSegments) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto [lowerTs, upperTs] = timestampBounds(conditions);
+    std::vector<std::future<QueryResult>> futures;
+
+    searchedSegments = 0;
+    for (const auto& segment : segments) {
+        if (!segmentOverlaps(segment, lowerTs, upperTs)) {
+            continue;
+        }
+
+        ++searchedSegments;
+        futures.push_back(std::async(std::launch::async, [&segment, &conditions, options]() {
+            QueryOptions segmentOptions = options;
+            segmentOptions.limit = std::numeric_limits<int>::max();
+            return executeIndexed(segment.storage, segment.index, conditions, segmentOptions);
+        }));
+    }
+
+    QueryResult combined;
+    combined.page = std::max(1, options.page);
+    combined.limit = std::max(1, options.limit);
+    combined.aggregate = options.aggregate;
+
+    for (auto& future : futures) {
+        auto partial = future.get();
+        combined.total += partial.total;
+        combined.records.insert(combined.records.end(), partial.records.begin(), partial.records.end());
+    }
+
+    std::sort(combined.records.begin(), combined.records.end(), [](const auto& left, const auto& right) {
+        return left.id < right.id;
+    });
+
+    const size_t start = static_cast<size_t>(combined.page - 1) * static_cast<size_t>(combined.limit);
+    if (start < combined.records.size()) {
+        const size_t end = std::min(combined.records.size(), start + static_cast<size_t>(combined.limit));
+        combined.records = std::vector<LogRecord>(combined.records.begin() + start, combined.records.begin() + end);
+    } else {
+        combined.records.clear();
+    }
+
+    const auto ended = std::chrono::steady_clock::now();
+    combined.tookMs = std::chrono::duration_cast<std::chrono::milliseconds>(ended - started).count();
+    return combined;
+}
+
+void printBenchmark(int count, const std::string& query, int segmentSize) {
     const auto records = generateLogs(count);
     LogStorage storage;
 
@@ -134,6 +237,10 @@ void printBenchmark(int count, const std::string& query) {
     index.build(storage);
     const auto indexEnded = std::chrono::steady_clock::now();
 
+    const auto segmentBuildStarted = std::chrono::steady_clock::now();
+    const auto segments = buildSegments(records, segmentSize);
+    const auto segmentBuildEnded = std::chrono::steady_clock::now();
+
     const auto conditions = parseQuery(query);
     QueryOptions options;
     options.limit = 10;
@@ -144,22 +251,34 @@ void printBenchmark(int count, const std::string& query) {
     threadedOptions.useThreads = true;
     const auto indexedSingle = executeIndexed(storage, index, conditions, singleThreadedOptions);
     const auto indexedThreaded = executeIndexed(storage, index, conditions, threadedOptions);
+    int searchedSegments = 0;
+    const auto segmentedThreaded = executeSegmentedIndexed(segments, conditions, threadedOptions, searchedSegments);
     const double singleSpeedup = naive.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(indexedSingle.tookMs) / naive.tookMs)) * 100.0;
     const double threadedSpeedup = naive.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(indexedThreaded.tookMs) / naive.tookMs)) * 100.0;
     const double threadingDelta = indexedSingle.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(indexedThreaded.tookMs) / indexedSingle.tookMs)) * 100.0;
+    const double segmentedSpeedup = naive.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(segmentedThreaded.tookMs) / naive.tookMs)) * 100.0;
+    const double segmentDelta = indexedThreaded.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(segmentedThreaded.tookMs) / indexedThreaded.tookMs)) * 100.0;
 
     std::cout << "{";
     std::cout << "\"records\":" << count << ",";
     std::cout << "\"query\":\"" << jsonEscape(query) << "\",";
+    std::cout << "\"segmentSize\":" << segmentSize << ",";
+    std::cout << "\"segments\":" << segments.size() << ",";
+    std::cout << "\"searchedSegments\":" << searchedSegments << ",";
     std::cout << "\"ingestMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(ingestEnded - ingestStarted).count() << ",";
     std::cout << "\"indexBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(indexEnded - indexStarted).count() << ",";
+    std::cout << "\"segmentBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(segmentBuildEnded - segmentBuildStarted).count() << ",";
     std::cout << "\"naiveMs\":" << naive.tookMs << ",";
     std::cout << "\"indexedSingleThreadMs\":" << indexedSingle.tookMs << ",";
     std::cout << "\"indexedThreadedMs\":" << indexedThreaded.tookMs << ",";
+    std::cout << "\"segmentedThreadedMs\":" << segmentedThreaded.tookMs << ",";
     std::cout << "\"singleThreadSpeedupPercent\":" << singleSpeedup << ",";
     std::cout << "\"threadedSpeedupPercent\":" << threadedSpeedup << ",";
     std::cout << "\"threadingDeltaPercent\":" << threadingDelta << ",";
-    std::cout << "\"matches\":" << indexedThreaded.total;
+    std::cout << "\"segmentedSpeedupPercent\":" << segmentedSpeedup << ",";
+    std::cout << "\"segmentDeltaPercent\":" << segmentDelta << ",";
+    std::cout << "\"matches\":" << indexedThreaded.total << ",";
+    std::cout << "\"segmentedMatches\":" << segmentedThreaded.total;
     std::cout << "}" << std::endl;
 }
 }
@@ -169,7 +288,8 @@ int main(int argc, char** argv) {
         if (hasArg(argc, argv, "--benchmark")) {
             const int count = std::stoi(argValue(argc, argv, "--count", "1000000"));
             const std::string query = argValue(argc, argv, "--query", "level = ERROR AND latency > 1190");
-            printBenchmark(count, query);
+            const int segmentSize = std::stoi(argValue(argc, argv, "--segment-size", "1000000"));
+            printBenchmark(count, query, segmentSize);
             return 0;
         }
 
