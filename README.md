@@ -1,6 +1,6 @@
-# Log Engine
+# Log & Observability Engine
 
-A high-performance C++ log query engine for structured JSON logs. The project focuses on indexing, multithreaded query execution, aggregations, pagination, and benchmark-driven performance over million-scale generated datasets.
+My custom high-performance C++ log query engine. The project focuses on indexing, multithreaded query execution, aggregations, pagination, and benchmark-driven performance over million-scale generated datasets.
 
 ## Stack
 
@@ -40,7 +40,7 @@ A high-performance C++ log query engine for structured JSON logs. The project fo
 From the project root:
 
 ```powershell
-cd C:\Users\ryan0\OneDrive\Documents\Playground\log-engine
+cd log-engine
 g++ -std=c++17 cpp/main.cpp cpp/parser.cpp cpp/storage.cpp cpp/index.cpp cpp/query.cpp -o cpp/log_engine.exe
 ```
 
@@ -146,7 +146,7 @@ Recent 10M-log segment-pruning benchmark:
 The Node API is a thin wrapper around the C++ binary. It is useful for demos, HTTP querying, ingestion into `data/logs.json`, and optional natural-language query translation.
 
 ```powershell
-cd C:\Users\ryan0\OneDrive\Documents\Playground\log-engine\api
+cd log-engine\api
 npm run dev
 ```
 
