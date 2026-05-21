@@ -283,26 +283,26 @@ void printBenchmark(int count, const std::string& query, int segmentSize) {
     const double segmentedSpeedup = naive.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(segmentedThreaded.tookMs) / naive.tookMs)) * 100.0;
     const double segmentDelta = indexedThreaded.tookMs == 0 ? 0.0 : (1.0 - (static_cast<double>(segmentedThreaded.tookMs) / indexedThreaded.tookMs)) * 100.0;
 
-    std::cout << "{";
-    std::cout << "\"records\":" << count << ",";
-    std::cout << "\"query\":\"" << jsonEscape(query) << "\",";
-    std::cout << "\"segmentSize\":" << segmentSize << ",";
-    std::cout << "\"segments\":" << segments.size() << ",";
-    std::cout << "\"searchedSegments\":" << searchedSegments << ",";
-    std::cout << "\"ingestMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(ingestEnded - ingestStarted).count() << ",";
-    std::cout << "\"indexBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(indexEnded - indexStarted).count() << ",";
-    std::cout << "\"segmentBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(segmentBuildEnded - segmentBuildStarted).count() << ",";
-    std::cout << "\"naiveMs\":" << naive.tookMs << ",";
-    std::cout << "\"indexedSingleThreadMs\":" << indexedSingle.tookMs << ",";
-    std::cout << "\"indexedThreadedMs\":" << indexedThreaded.tookMs << ",";
-    std::cout << "\"segmentedThreadedMs\":" << segmentedThreaded.tookMs << ",";
-    std::cout << "\"singleThreadSpeedupPercent\":" << singleSpeedup << ",";
-    std::cout << "\"threadedSpeedupPercent\":" << threadedSpeedup << ",";
-    std::cout << "\"threadingDeltaPercent\":" << threadingDelta << ",";
-    std::cout << "\"segmentedSpeedupPercent\":" << segmentedSpeedup << ",";
-    std::cout << "\"segmentDeltaPercent\":" << segmentDelta << ",";
-    std::cout << "\"matches\":" << indexedThreaded.total << ",";
-    std::cout << "\"segmentedMatches\":" << segmentedThreaded.total;
+    std::cout << "{" << '\n';
+    std::cout << "\"records\":" << count << '\n';
+    std::cout << "\"query\":\"" << jsonEscape(query) << '\n';
+    std::cout << "\"segmentSize\":" << segmentSize << '\n';
+    std::cout << "\"segments\":" << segments.size() << '\n';
+    std::cout << "\"searchedSegments\":" << searchedSegments << '\n';
+    std::cout << "\"ingestMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(ingestEnded - ingestStarted).count() << '\n';
+    std::cout << "\"indexBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(indexEnded - indexStarted).count() << '\n';
+    std::cout << "\"segmentBuildMs\":" << std::chrono::duration_cast<std::chrono::milliseconds>(segmentBuildEnded - segmentBuildStarted).count() << '\n';
+    std::cout << "\"naiveMs\":" << naive.tookMs << '\n';
+    std::cout << "\"indexedSingleThreadMs\":" << indexedSingle.tookMs << '\n';
+    std::cout << "\"indexedThreadedMs\":" << indexedThreaded.tookMs << '\n';
+    std::cout << "\"segmentedThreadedMs\":" << segmentedThreaded.tookMs << '\n';
+    std::cout << "\"singleThreadSpeedupPercent\":" << singleSpeedup << '\n';
+    std::cout << "\"threadedSpeedupPercent\":" << threadedSpeedup << '\n';
+    std::cout << "\"threadingDeltaPercent\":" << threadingDelta << '\n';
+    std::cout << "\"segmentedSpeedupPercent\":" << segmentedSpeedup << '\n';
+    std::cout << "\"segmentDeltaPercent\":" << segmentDelta << '\n';
+    std::cout << "\"matches\":" << indexedThreaded.total << '\n';
+    std::cout << "\"segmentedMatches\":" << segmentedThreaded.total << '\n';
     std::cout << "}" << std::endl;
 }
 }
