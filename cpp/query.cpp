@@ -3,10 +3,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
-#include <future>
+#include <exception>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
-#include <stdexcept>
 
 namespace {
 std::string trim(const std::string& input) {
@@ -117,22 +117,39 @@ QueryResult materializeResult(
 
         const unsigned int workerCount = std::max(1u, std::thread::hardware_concurrency());
         const size_t chunkSize = std::max<size_t>(1, matches.size() / workerCount);
-        std::vector<std::future<std::unordered_map<std::string, double>>> futures;
+        const size_t chunkCount = (matches.size() + chunkSize - 1) / chunkSize;
+        std::vector<std::unordered_map<std::string, double>> partials(chunkCount);
+        std::vector<std::exception_ptr> errors(chunkCount);
+        std::vector<std::thread> threads;
+        threads.reserve(chunkCount);
 
+        size_t chunkIndex = 0;
         for (size_t start = 0; start < matches.size(); start += chunkSize) {
             const size_t end = std::min(matches.size(), start + chunkSize);
-            futures.push_back(std::async(std::launch::async, [start, end, &matches]() {
-                std::unordered_map<std::string, double> localCounts;
-                for (size_t i = start; i < end; ++i) {
-                    localCounts[matches[i].service] += 1.0;
+            threads.emplace_back([start, end, chunkIndex, &matches, &partials, &errors]() {
+                try {
+                    for (size_t i = start; i < end; ++i) {
+                        partials[chunkIndex][matches[i].service] += 1.0;
+                    }
+                } catch (...) {
+                    errors[chunkIndex] = std::current_exception();
                 }
-                return localCounts;
-            }));
+            });
+            ++chunkIndex;
+        }
+
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        for (auto& error : errors) {
+            if (error) {
+                std::rethrow_exception(error);
+            }
         }
 
         std::unordered_map<std::string, double> counts;
-        for (auto& future : futures) {
-            const auto partial = future.get();
+        for (const auto& partial : partials) {
             for (const auto& entry : partial) {
                 counts[entry.first] += entry.second;
             }
@@ -166,24 +183,41 @@ QueryResult materializeResult(
 
         const unsigned int workerCount = std::max(1u, std::thread::hardware_concurrency());
         const size_t chunkSize = std::max<size_t>(1, matches.size() / workerCount);
-        std::vector<std::future<ServiceStats>> futures;
+        const size_t chunkCount = (matches.size() + chunkSize - 1) / chunkSize;
+        std::vector<ServiceStats> partials(chunkCount);
+        std::vector<std::exception_ptr> errors(chunkCount);
+        std::vector<std::thread> threads;
+        threads.reserve(chunkCount);
 
+        size_t chunkIndex = 0;
         for (size_t start = 0; start < matches.size(); start += chunkSize) {
             const size_t end = std::min(matches.size(), start + chunkSize);
-            futures.push_back(std::async(std::launch::async, [start, end, &matches]() {
-                ServiceStats local;
-                for (size_t i = start; i < end; ++i) {
-                    local.sums[matches[i].service] += matches[i].latency;
-                    local.counts[matches[i].service] += 1.0;
+            threads.emplace_back([start, end, chunkIndex, &matches, &partials, &errors]() {
+                try {
+                    for (size_t i = start; i < end; ++i) {
+                        partials[chunkIndex].sums[matches[i].service] += matches[i].latency;
+                        partials[chunkIndex].counts[matches[i].service] += 1.0;
+                    }
+                } catch (...) {
+                    errors[chunkIndex] = std::current_exception();
                 }
-                return local;
-            }));
+            });
+            ++chunkIndex;
+        }
+
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        for (auto& error : errors) {
+            if (error) {
+                std::rethrow_exception(error);
+            }
         }
 
         std::unordered_map<std::string, double> sums;
         std::unordered_map<std::string, double> counts;
-        for (auto& future : futures) {
-            const auto partial = future.get();
+        for (const auto& partial : partials) {
             for (const auto& entry : partial.sums) {
                 sums[entry.first] += entry.second;
             }
@@ -292,19 +326,36 @@ QueryResult executeIndexed(const LogStorage& storage, const LogIndex& index, con
     std::vector<std::vector<int>> indexedCandidates;
 
     if (options.useThreads && conditions.size() > 1) {
-        std::vector<std::future<std::pair<bool, std::vector<int>>>> futures;
-        for (const auto& condition : conditions) {
-            futures.push_back(std::async(std::launch::async, [&index, condition]() {
-                bool canUseIndex = false;
-                auto ids = indexedIdsForCondition(index, condition, canUseIndex);
-                return std::make_pair(canUseIndex, std::move(ids));
-            }));
+        std::vector<std::pair<bool, std::vector<int>>> resolved(conditions.size());
+        std::vector<std::exception_ptr> errors(conditions.size());
+        std::vector<std::thread> threads;
+        threads.reserve(conditions.size());
+
+        for (size_t i = 0; i < conditions.size(); ++i) {
+            threads.emplace_back([&, i]() {
+                try {
+                    bool canUseIndex = false;
+                    auto ids = indexedIdsForCondition(index, conditions[i], canUseIndex);
+                    resolved[i] = std::make_pair(canUseIndex, std::move(ids));
+                } catch (...) {
+                    errors[i] = std::current_exception();
+                }
+            });
         }
 
-        for (auto& future : futures) {
-            auto resolved = future.get();
-            if (resolved.first) {
-                indexedCandidates.push_back(std::move(resolved.second));
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        for (auto& error : errors) {
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        }
+
+        for (auto& item : resolved) {
+            if (item.first) {
+                indexedCandidates.push_back(std::move(item.second));
             }
         }
     } else {

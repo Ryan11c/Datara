@@ -5,12 +5,13 @@
 
 #include <algorithm>
 #include <chrono>
-#include <future>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -180,7 +181,7 @@ bool segmentOverlaps(const Segment& segment, long long lowerTs, long long upperT
 QueryResult executeSegmentedIndexed(const std::vector<Segment>& segments, const std::vector<Condition>& conditions, const QueryOptions& options, int& searchedSegments) {
     const auto started = std::chrono::steady_clock::now();
     const auto [lowerTs, upperTs] = timestampBounds(conditions);
-    std::vector<std::future<QueryResult>> futures;
+    std::vector<const Segment*> searchableSegments;
 
     searchedSegments = 0;
     for (const auto& segment : segments) {
@@ -189,11 +190,25 @@ QueryResult executeSegmentedIndexed(const std::vector<Segment>& segments, const 
         }
 
         ++searchedSegments;
-        futures.push_back(std::async(std::launch::async, [&segment, &conditions, options]() {
-            QueryOptions segmentOptions = options;
-            segmentOptions.limit = std::numeric_limits<int>::max();
-            return executeIndexed(segment.storage, segment.index, conditions, segmentOptions);
-        }));
+        searchableSegments.push_back(&segment);
+    }
+
+    std::vector<QueryResult> partials(searchableSegments.size());
+    std::vector<std::exception_ptr> errors(searchableSegments.size());
+    std::vector<std::thread> threads;
+    threads.reserve(searchableSegments.size());
+
+    for (size_t i = 0; i < searchableSegments.size(); ++i) {
+        threads.emplace_back([&, i]() {
+            try {
+                const Segment& segment = *searchableSegments[i];
+                QueryOptions segmentOptions = options;
+                segmentOptions.limit = std::numeric_limits<int>::max();
+                partials[i] = executeIndexed(segment.storage, segment.index, conditions, segmentOptions);
+            } catch (...) {
+                errors[i] = std::current_exception();
+            }
+        });
     }
 
     QueryResult combined;
@@ -201,8 +216,17 @@ QueryResult executeSegmentedIndexed(const std::vector<Segment>& segments, const 
     combined.limit = std::max(1, options.limit);
     combined.aggregate = options.aggregate;
 
-    for (auto& future : futures) {
-        auto partial = future.get();
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    for (auto& error : errors) {
+        if (error) {
+            std::rethrow_exception(error);
+        }
+    }
+
+    for (auto& partial : partials) {
         combined.total += partial.total;
         combined.records.insert(combined.records.end(), partial.records.begin(), partial.records.end());
     }

@@ -6,7 +6,7 @@ A high-performance C++ log query engine for structured JSON logs. The project fo
 
 - C++17
 - STL containers and algorithms
-- Multithreading with `std::async`
+- Multithreading with `std::thread`
 - Node.js REST API wrapper, optional
 - OpenAI Responses API for optional natural-language query translation
 
